@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="es">
+<head><meta name="twitter:card" content="summary_large_image"><meta property="og:title" content="Cerquita"><meta property="og:image" content="https://hds-h26xm55xehy8-6014-uh7yz.grok-code-wild.hades-www.grok-sandbox.com/og.jpg"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Cerquita</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    :root { color-scheme: light; --ink:#1c2430; --muted:#564e48; --cream:#f4efe8; --card:#fffdfb; --line:#e4d9cc; --blue:#1a73e8; }
+    * { box-sizing: border-box; }
+    html, body { margin:0; height:100%; background:var(--cream); color:var(--ink); font-family: "Avenir Next", "Segoe UI", sans-serif; }
+    #map { position:absolute; inset:0; z-index:0; }
+    header { position:absolute; z-index:2; top:0; left:0; right:0; display:flex; justify-content:space-between; gap:8px; padding:16px; pointer-events:none; }
+    .card { pointer-events:auto; background:var(--card); border:1px solid var(--line); border-radius:999px; box-shadow:0 8px 24px rgba(28,36,48,.08); }
+    .brand, .pill, button, a.btn { min-height:44px; }
+    .brand { display:flex; align-items:center; gap:8px; padding:6px 14px 6px 8px; font-family: Georgia, serif; font-size:22px; }
+    .dot { width:12px; height:12px; border-radius:99px; background:var(--blue); box-shadow:0 0 0 6px rgba(26,115,232,.15); margin-left:8px; }
+    .pill { display:inline-flex; align-items:center; padding:0 14px; }
+    button, .btn { border:0; cursor:pointer; font:inherit; }
+    .primary { background:var(--blue); color:#fff; }
+    .soft { background:var(--cream); color:var(--ink); }
+    .sheet { position:absolute; z-index:2; left:0; right:0; bottom:0; max-height:52vh; overflow:auto; background:var(--card); border:1px solid var(--line); border-radius:24px 24px 0 0; padding:16px 16px 24px; display:grid; gap:10px; }
+    .row { display:flex; gap:8px; overflow:auto; }
+    .chip, .field, .btn { border-radius:999px; }
+    .chip { border:1px solid var(--line); background:#fff; padding:8px 12px; white-space:nowrap; }
+    .chip[aria-pressed="true"] { background:var(--blue); color:#fff; border-color:var(--blue); }
+    .field { width:100%; border:1px solid var(--line); background:#fff; min-height:44px; padding:0 14px; }
+    .btn { display:inline-flex; align-items:center; justify-content:center; padding:0 14px; text-decoration:none; }
+    .wide { width:100%; }
+    .muted { color:var(--muted); font-size:14px; margin:0; }
+    h2 { font-family: Georgia, serif; font-size:26px; margin:0; }
+    .code { text-align:center; letter-spacing:.28em; font-family: Georgia, serif; font-size:32px; margin:0; }
+    #qr { width:160px; margin:0 auto; }
+    #qr svg { width:100%; height:auto; }
+    .empty { position:absolute; z-index:2; left:16px; right:16px; top:42%; transform:translateY(-50%); padding:16px; text-align:center; border-radius:24px; }
+    .pin { width:18px; height:18px; border-radius:99px; background:var(--blue); border:3px solid #fff; box-shadow:0 0 0 8px rgba(26,115,232,.2); }
+    @media (min-width: 800px) {
+      .sheet { left:16px; right:auto; top:16px; bottom:16px; width:380px; max-height:none; border-radius:24px; }
+    }
+  </style>
+<link rel="manifest" href="/__grok/manifest.webmanifest"><link rel="apple-touch-icon" href="/__grok/icon-180.png"><meta name="apple-mobile-web-app-title" content="Cerquita"><meta name="apple-mobile-web-app-status-bar-style" content="black"><meta name="theme-color" content="#000000"><script src="https://grok.com/grok-app-builder/extensions.js" defer></script></head>
+<body>
+  <div id="map"></div>
+  <header>
+    <div class="card brand"><span class="dot"></span> Cerquita</div>
+    <button id="open-link" class="card pill primary" type="button">Vincular</button>
+  </header>
+  <div id="empty" class="card empty">
+    <h2>Tu puntico azul va a salir aquí</h2>
+    <p class="muted">El teléfono pide permiso de ubicación cuando tocas el botón.</p>
+    <button id="gps" class="btn primary wide" type="button">Activar mi ubicación</button>
+    <p id="geo-note" class="muted"></p>
+  </div>
+  <section class="sheet" id="sheet"></section>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const PRESETS = [
+      ["live", "Ubicación", "Estoy aquí", false],
+      ["home", "En casa", "Estoy en casa", true],
+      ["bus", "En el bus", "Voy en el bus", false],
+      ["uni", "Universidad", "Estoy en la universidad", true],
+      ["cafe", "Cafetería", "Estoy en la cafetería, comiendo", true],
+      ["walk", "Caminando", "Estoy caminando", false],
+      ["work", "Trabajo", "Estoy en el trabajo", true],
+      ["sleep", "Durmiendo", "Estoy durmiendo", true]
+    ];
+    const KEY = "cerquita.html.v1";
+    const BAKED = "http://localhost:8080";
+    const origin = location.protocol === "http:" || location.protocol === "https:"
+      ? location.origin
+      : (BAKED.startsWith("http") ? BAKED : "");
+    const API = origin ? origin + "/api/circle" : "";
+    const state = Object.assign({
+      myName: "", phrase: "", presetId: null, message: "", pin: null, accuracy: null,
+      places: [], spaceCode: "", updatedAt: 0
+    }, JSON.parse(localStorage.getItem(KEY) || "{}"));
+    let battery = { level: null, charging: null };
+    let peers = [];
+    let panel = "mine";
+    let qr = "";
+    let watchId = null;
+    let map, meMarker, peerLayer;
+
+    function device() {
+      const raw = localStorage.getItem("cerquita.device");
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (saved.id && saved.token && saved.token.length >= 20) return saved;
+      }
+      const made = { id: crypto.randomUUID(), token: (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, "") };
+      localStorage.setItem("cerquita.device", JSON.stringify(made));
+      return made;
+    }
+    function creds() {
+      const saved = device();
+      return { deviceId: saved.id, token: saved.token };
+    }
+    function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
+    function codeOf(value) { return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6); }
+    function pretty(code) { return code.length === 6 ? code.slice(0, 3) + " " + code.slice(3) : code; }
+    async function post(body) {
+      if (!API) throw new Error("Este archivo, abierto solo, guarda todo en el teléfono. Para verse entre varios, ábrelo desde Cerquita en internet.");
+      const response = await fetch(API, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "No pude hacerlo");
+      return data;
+    }
+    function mood() {
+      if (state.presetId && state.presetId !== "custom") return state.presetId;
+      const text = state.phrase.toLowerCase();
+      if (text.includes("durmi")) return "sleep";
+      if (text.includes("bus")) return "bus";
+      if (text.includes("cafeter") || text.includes("comi")) return "cafe";
+      if (text.includes("universidad")) return "uni";
+      if (text.includes("trabaj")) return "work";
+      if (text.includes("camin")) return "walk";
+      if (text.includes("casa")) return "home";
+      return "live";
+    }
+    function icon() {
+      return L.divIcon({ className: "", html: '<div class="pin"></div>', iconSize: [18, 18], iconAnchor: [9, 9] });
+    }
+    function draw() {
+      if (state.pin) {
+        if (!meMarker) meMarker = L.marker([state.pin.lat, state.pin.lng], { icon: icon() }).addTo(map);
+        else meMarker.setLatLng([state.pin.lat, state.pin.lng]);
+        document.getElementById("empty").style.display = "none";
+      }
+      peerLayer.clearLayers();
+      peers.forEach((person) => {
+        if (person.lat == null || person.lng == null) return;
+        L.marker([person.lat, person.lng], { icon: icon() }).addTo(peerLayer).bindTooltip(person.name || "Alguien", { permanent: true, direction: "top" });
+      });
+    }
+    function startGps() {
+      const note = document.getElementById("geo-note");
+      if (!navigator.geolocation) {
+        if (note) note.textContent = "Este teléfono no deja leer la ubicación.";
+        return;
+      }
+      if (watchId != null) navigator.geolocation.clearWatch(watchId);
+      watchId = navigator.geolocation.watchPosition((position) => {
+        state.pin = { lat: position.coords.latitude, lng: position.coords.longitude };
+        state.accuracy = position.coords.accuracy;
+        state.updatedAt = Date.now();
+        save();
+        if (!meMarker) map.setView([state.pin.lat, state.pin.lng], 17);
+        draw();
+        render();
+        pulse();
+      }, () => {
+        const box = document.getElementById("geo-note");
+        if (box) box.textContent = "No pude leer la ubicación. Actívala en el teléfono y vuelve a tocar el botón.";
+      }, { enableHighAccuracy: true, maximumAge: 15000, timeout: 12000 });
+    }
+    async function pulse() {
+      if (!state.spaceCode || !API) return;
+      try {
+        await post({
+          action: "pulse", ...creds(), name: state.myName, phrase: state.phrase, message: state.message, mood: mood(),
+          lat: state.pin ? state.pin.lat : null, lng: state.pin ? state.pin.lng : null,
+          accuracy: state.accuracy, battery: battery.level, charging: battery.charging
+        });
+      } catch (_) {}
+    }
+    async function refreshPeers() {
+      if (!state.spaceCode || !API) return;
+      try {
+        const data = await post({ action: "watch", ...creds() });
+        peers = data.people || [];
+        draw();
+        if (panel !== "mine") render();
+      } catch (_) {}
+    }
+    function render() {
+      const sheet = document.getElementById("sheet");
+      const link = document.getElementById("open-link");
+      link.textContent = state.spaceCode ? pretty(state.spaceCode) : "Vincular";
+      if (panel === "share") {
+        sheet.innerHTML = state.spaceCode ? linkedHtml() : joinHtml();
+        bindShare();
+        return;
+      }
+      const power = battery.level == null ? "" : `<p class="muted">Batería ${Math.round(battery.level * 100)}%${battery.charging ? " · cargando" : ""}</p>`;
+      const people = peers.map((person) => `<p class="muted">${escapeHtml(person.name || "Alguien")} · ${escapeHtml(person.phrase || "sin estado")}</p>`).join("");
+      sheet.innerHTML = `
+        <div class="row">${PRESETS.map(([id, label]) => `<button class="chip" data-preset="${id}" aria-pressed="${state.presetId === id}">${label}</button>`).join("")}</div>
+        <input id="phrase" class="field" maxlength="140" placeholder="Estoy en casa" value="${escapeAttr(state.phrase)}" />
+        <input id="message" class="field" maxlength="160" placeholder="Un mensajito" value="${escapeAttr(state.message)}" />
+        <input id="name" class="field" maxlength="40" placeholder="Tu nombre" value="${escapeAttr(state.myName)}" />
+        ${power ? `<p id="power" class="muted">Batería ${Math.round((battery.level || 0) * 100)}%${battery.charging ? " · cargando" : ""}</p>` : `<p id="power" class="muted"></p>`}
+        ${people}
+        <p class="muted">${state.spaceCode ? "El círculo ve tu punto y tú ves el de ellos." : "Toca Vincular, crea el código y pásalo."}</p>
+        <button id="add-place" class="btn soft wide" type="button">Guardar donde estoy</button>
+        ${state.places.map((place) => `<button class="btn soft wide" data-place="${place.id}" type="button">${escapeHtml(place.name)}</button>`).join("")}
+      `;
+      sheet.querySelectorAll("[data-preset]").forEach((button) => button.onclick = () => choose(button.dataset.preset));
+      sheet.querySelector("#phrase").oninput = (event) => { state.phrase = event.target.value; state.updatedAt = Date.now(); save(); pulse(); };
+      sheet.querySelector("#message").oninput = (event) => { state.message = event.target.value; state.updatedAt = Date.now(); save(); pulse(); };
+      sheet.querySelector("#name").oninput = (event) => { state.myName = event.target.value; save(); pulse(); };
+      sheet.querySelector("#add-place").onclick = () => {
+        if (!state.pin) { startGps(); return; }
+        const name = prompt("Nombre del lugar", "Casa");
+        if (!name) return;
+        state.places.push({ id: crypto.randomUUID(), name: name.slice(0, 60), kind: "custom", lat: state.pin.lat, lng: state.pin.lng });
+        state.places = state.places.slice(0, 30);
+        save();
+        render();
+      };
+      sheet.querySelectorAll("[data-place]").forEach((button) => button.onclick = () => {
+        const place = state.places.find((item) => item.id === button.dataset.place);
+        if (!place) return;
+        state.pin = { lat: place.lat, lng: place.lng };
+        state.phrase = state.phrase || `Estoy en ${place.name}`;
+        state.updatedAt = Date.now();
+        save();
+        map.setView([place.lat, place.lng], 17);
+        draw();
+        pulse();
+        render();
+      });
+    }
+    function choose(id) {
+      const preset = PRESETS.find((item) => item[0] === id);
+      state.presetId = id;
+      state.phrase = preset[2];
+      state.updatedAt = Date.now();
+      save();
+      if (!preset[3] || !state.pin) startGps();
+      render();
+      pulse();
+    }
+    function linkedHtml() {
+      return `<h2>Tu círculo</h2><p class="code">${pretty(state.spaceCode)}</p><div id="qr">${qr}</div>
+        <p class="muted">Varias personas pueden entrar con este código. Cada quien pone dónde está.</p>
+        <button id="copy-code" class="btn soft wide" type="button">Copiar código</button>
+        <button id="copy-link" class="btn primary wide" type="button">Copiar enlace</button>
+        <p class="muted">${peers.length ? peers.length + " en el círculo" : "Todavía no entra nadie."}</p>
+        <button id="leave" class="btn soft wide" type="button">Salir del círculo</button>
+        <button id="back" class="btn soft wide" type="button">Volver</button>`;
+    }
+    function joinHtml() {
+      return `<h2>Tu círculo</h2><p class="muted">Crea un código o escribe el que te pasaron. No hace falta otra cuenta.</p>
+        <button id="create" class="btn primary wide" type="button">Crear código y QR</button>
+        <input id="code" class="field" maxlength="7" placeholder="ABC 123" style="text-align:center;letter-spacing:.2em;font-size:24px" />
+        <button id="join" class="btn soft wide" type="button">Entrar al círculo</button>
+        <p id="link-error" class="muted"></p>
+        <button id="back" class="btn soft wide" type="button">Volver</button>`;
+    }
+    function bindShare() {
+      const back = document.getElementById("back");
+      if (back) back.onclick = () => { panel = "mine"; render(); };
+      const create = document.getElementById("create");
+      if (create) create.onclick = async () => {
+        try {
+          const data = await post({ action: "create", ...creds(), name: state.myName });
+          state.spaceCode = data.code;
+          save();
+          qr = await qrFor(data.code);
+          render();
+        } catch (error) { document.getElementById("link-error").textContent = error.message; }
+      };
+      const join = document.getElementById("join");
+      if (join) join.onclick = async () => {
+        try {
+          const code = codeOf(document.getElementById("code").value);
+          const data = await post({ action: "join", ...creds(), name: state.myName, code });
+          state.spaceCode = data.code;
+          save();
+          qr = await qrFor(data.code);
+          render();
+          pulse();
+        } catch (error) { document.getElementById("link-error").textContent = error.message; }
+      };
+      const copyCode = document.getElementById("copy-code");
+      if (copyCode) copyCode.onclick = () => navigator.clipboard.writeText(pretty(state.spaceCode));
+      const copyLink = document.getElementById("copy-link");
+      if (copyLink) copyLink.onclick = () => navigator.clipboard.writeText(joinLink(state.spaceCode));
+      const leave = document.getElementById("leave");
+      if (leave) leave.onclick = async () => {
+        try { await post({ action: "leave", ...creds() }); } catch (_) {}
+        state.spaceCode = "";
+        peers = [];
+        qr = "";
+        save();
+        panel = "mine";
+        render();
+        draw();
+      };
+    }
+    function joinLink(code) {
+      const url = new URL(location.href);
+      url.search = "";
+      url.hash = "";
+      url.searchParams.set("code", code);
+      return url.toString();
+    }
+    async function qrFor(code) {
+      try {
+        const data = await post({ action: "qr", code, link: joinLink(code) });
+        return data.svg || "";
+      } catch (_) { return ""; }
+    }
+    function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (ch) => ({ "&":"&", "<":"<", ">":">", '"':""", "'":"&#39;" }[ch])); }
+    function escapeAttr(value) { return escapeHtml(value); }
+
+    map = L.map("map", { zoomControl: true }).setView([4.65, -74.08], 12);
+    L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", {
+      maxZoom: 19, attribution: "Esri"
+    }).addTo(map);
+    peerLayer = L.layerGroup().addTo(map);
+    document.getElementById("gps").onclick = startGps;
+    document.getElementById("open-link").onclick = () => { panel = "share"; render(); };
+    const fromLink = codeOf(new URLSearchParams(location.search).get("code"));
+    if (fromLink.length === 6 && API) {
+      post({ action: "join", ...creds(), name: state.myName, code: fromLink }).then(async (data) => {
+        state.spaceCode = data.code;
+        save();
+        qr = await qrFor(data.code);
+        panel = "share";
+        render();
+      }).catch(() => render());
+    }
+    if (navigator.getBattery) navigator.getBattery().then((manager) => {
+      const read = () => {
+        battery = { level: manager.level, charging: manager.charging };
+        const el = document.getElementById("power");
+        if (el) el.textContent = `Batería ${Math.round(battery.level * 100)}%${battery.charging ? " · cargando" : ""}`;
+        pulse();
+      };
+      read();
+      manager.addEventListener("levelchange", read);
+      manager.addEventListener("chargingchange", read);
+    }).catch(() => {});
+    render();
+    draw();
+    setInterval(refreshPeers, 4000);
+    refreshPeers();
+  </script>
+</body>
+</html>
